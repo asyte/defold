@@ -12,7 +12,7 @@ to (BUG.###), and its upstream pull request or "not offered, because ...".
 
 | Commit | Fixes | TrailPark bug | Upstream |
 | ------ | ----- | ------------- | -------- |
-| (none yet) | | | |
+| 4fb637c | A startup crash on the job thread when the OpenGL async texture check fails: `ValidateAsyncJobProcessing()` now deletes its test texture directly, so no delete job is left to lock the mutexes `AsyncInitialize()` deletes | BUG.001 | Issue and pull request not yet filed; the pull request will come from `fix/async-validation-texture-race` |
 
 ## Build machine
 
