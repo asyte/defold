@@ -1278,6 +1278,8 @@ static void LogFrameBufferError(GLenum status)
         return func;
     }
 
+    static void DoDeleteTexture(OpenGLContext* context, HTexture texture);
+
     static bool ValidateAsyncJobProcessing(HContext _context)
     {
         OpenGLContext* context = (OpenGLContext*) _context;
@@ -1352,7 +1354,9 @@ static void LogFrameBufferError(GLenum status)
             glBindFramebuffer(GL_FRAMEBUFFER, dmPlatform::OpenGLGetDefaultFramebufferId());
             CHECK_GL_ERROR;
             glDeleteFramebuffers(1, &osfb);
-            DeleteTexture(_context, texture_handle);
+            // Delete directly instead of queueing an async delete job, since AsyncInitialize
+            // deletes the mutexes that job uses when this check fails
+            DoDeleteTexture(context, texture_handle);
 
             if(memcmp(data, gpu_data, sizeof(data))!=0)
             {
