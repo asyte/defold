@@ -189,6 +189,14 @@ namespace dmGameSystem
             return result;
         }
 
+        if (resource->m_MeshDDF->m_Indices && *resource->m_MeshDDF->m_Indices != 0)
+        {
+            // On failure, ReleaseResources releases what was acquired so far
+            result = dmResource::Get(factory, resource->m_MeshDDF->m_Indices, (void**)&resource->m_IndexBufferResource);
+            if (result != dmResource::RESULT_OK)
+                return result;
+        }
+
         TextureResource* textures[dmRender::RenderObject::MAX_TEXTURE_COUNT];
         memset(textures, 0, dmRender::RenderObject::MAX_TEXTURE_COUNT * sizeof(TextureResource*));
 
@@ -300,6 +308,12 @@ namespace dmGameSystem
         if (resource->m_BufferResource != 0x0)
             dmResource::Release(factory, resource->m_BufferResource);
 
+        if (resource->m_IndexBufferResource != 0x0)
+        {
+            dmResource::Release(factory, resource->m_IndexBufferResource);
+            resource->m_IndexBufferResource = 0x0;
+        }
+
         if (resource->m_VertexDeclaration)
         {
             dmGraphics::DeleteVertexDeclaration(resource->m_VertexDeclaration);
@@ -339,6 +353,8 @@ namespace dmGameSystem
 
         dmResource::PreloadHint(params->m_HintInfo, ddf->m_Material);
         dmResource::PreloadHint(params->m_HintInfo, ddf->m_Vertices);
+        if (ddf->m_Indices && *ddf->m_Indices != 0)
+            dmResource::PreloadHint(params->m_HintInfo, ddf->m_Indices);
         for (uint32_t i = 0; i < ddf->m_Textures.m_Count && i < dmRender::RenderObject::MAX_TEXTURE_COUNT; ++i)
         {
             dmResource::PreloadHint(params->m_HintInfo, ddf->m_Textures[i]);

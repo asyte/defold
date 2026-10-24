@@ -1,3 +1,5 @@
 /mesh/no_data.mesh
 /mesh/test_comp.go
 /mesh/profile_counts.go
+/mesh/indexed_quad.go
+/mesh/triangle_indices.buffer

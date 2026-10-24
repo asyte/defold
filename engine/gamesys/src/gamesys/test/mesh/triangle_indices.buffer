@@ -1,0 +1,10 @@
+[
+    {
+        "name": "index",
+        "type": "uint16",
+        "count": 1,
+        "data": [
+            0, 2, 3
+        ]
+    }
+]

@@ -2308,6 +2308,148 @@ TEST_F(MeshVertexBufferTest, VerticesOverride)
     Render(1, m_Mesh->m_BufferResource);
 }
 
+class IndexedMeshTest : public GamesysTest<const char*>
+{
+    public:
+    IndexedMeshTest()
+    {
+        SetContentFolder("mesh");
+    }
+
+    // Renders one frame and returns the render object of the only mesh
+    void RenderMesh(dmRender::RenderObject** out_ro)
+    {
+        ASSERT_TRUE(dmGameObject::Update(m_Collection, &m_UpdateContext));
+        ASSERT_TRUE(dmGameObject::PostUpdate(m_Collection));
+
+        dmRender::ClearRenderObjects(m_RenderContext);
+        dmGraphics::ResetDrawCount();
+        dmRender::RenderListBegin(m_RenderContext);
+        ASSERT_TRUE(dmGameObject::Render(m_Collection));
+        dmRender::RenderListEnd(m_RenderContext);
+        ASSERT_EQ(dmRender::RESULT_OK, dmRender::DrawRenderList(m_RenderContext, 0, 0, 0, dmRender::SORT_BACK_TO_FRONT));
+        ASSERT_EQ(1u, dmGraphics::GetDrawCount());
+
+        dmRender::RenderContext* render_ctx = (dmRender::RenderContext*)m_RenderContext;
+        ASSERT_EQ(1u, render_ctx->m_RenderObjects.Size());
+        *out_ro = render_ctx->m_RenderObjects[0];
+    }
+};
+
+template <typename T>
+static void AssertIndices(dmRender::RenderObject* ro, dmGraphics::Type type, const T* expected, uint32_t count)
+{
+    ASSERT_NE((dmGraphics::HIndexBuffer)0, ro->m_IndexBuffer);
+    ASSERT_EQ(type, ro->m_IndexType);
+    ASSERT_EQ(count, ro->m_VertexCount);
+    ASSERT_EQ(count * sizeof(T), dmGraphics::GetIndexBufferSize(ro->m_IndexBuffer));
+    ASSERT_ARRAY_EQ_LEN(expected, (T*)((dmGraphics::IndexBuffer*)ro->m_IndexBuffer)->m_Buffer, count);
+}
+
+// Indexed meshes draw by index, and their indices can be replaced at run time like their vertices.
+TEST_F(IndexedMeshTest, DrawAndReplaceIndices)
+{
+    ASSERT_TRUE(dmGameObject::Init(m_Collection));
+    dmGameObject::HInstance instance = Spawn(m_Factory, m_Collection, "/mesh/indexed_quad.goc", dmHashString64("/quad"));
+    ASSERT_NE((dmGameObject::HInstance)0, instance);
+
+    dmRender::RenderObject* ro = 0;
+    RenderMesh(&ro);
+    const uint16_t quad_indices[] = { 0, 1, 2, 0, 2, 3 };
+    AssertIndices(ro, dmGraphics::TYPE_UNSIGNED_SHORT, quad_indices, 6);
+
+    // Replace the buffer of the indices resource, as resource.set_buffer does
+    dmGameSystem::BufferResource* indices;
+    ASSERT_EQ(dmResource::RESULT_OK, dmResource::Get(m_Factory, "/mesh/quad_indices.bufferc", (void**)&indices));
+    const dmBuffer::StreamDeclaration stream = { dmHashString64("index"), dmBuffer::VALUE_TYPE_UINT32, 1 };
+    dmBuffer::HBuffer buffer = 0;
+    ASSERT_EQ(dmBuffer::RESULT_OK, dmBuffer::Create(3, &stream, 1, &buffer));
+    uint32_t* data = 0;
+    uint32_t size = 0;
+    ASSERT_EQ(dmBuffer::RESULT_OK, dmBuffer::GetBytes(buffer, (void**)&data, &size));
+    const uint32_t triangle_indices[] = { 1, 2, 3 };
+    memcpy(data, triangle_indices, sizeof(triangle_indices));
+    dmBuffer::Destroy(indices->m_Buffer);
+    indices->m_Buffer = buffer;
+    indices->m_ElementCount = 3;
+    indices->m_Stride = dmBuffer::GetStructSize(buffer);
+    dmResource::Release(m_Factory, indices);
+
+    RenderMesh(&ro);
+    AssertIndices(ro, dmGraphics::TYPE_UNSIGNED_INT, triangle_indices, 3);
+
+    // Replace the indices resource, as go.set(mesh, "indices", res) does with a loaded resource
+    dmGameSystem::BufferResource* other;
+    ASSERT_EQ(dmResource::RESULT_OK, dmResource::Get(m_Factory, "/mesh/triangle_indices.bufferc", (void**)&other));
+    dmhash_t comp_id = dmHashString64("mesh");
+    dmhash_t prop_id = dmHashString64("indices");
+    dmhash_t path = dmHashString64("/mesh/triangle_indices.bufferc");
+    dmGameObject::PropertyOptions options;
+    ASSERT_EQ(dmGameObject::PROPERTY_RESULT_OK, dmGameObject::SetProperty(instance, comp_id, prop_id, options, dmGameObject::PropertyVar(path)));
+    dmGameObject::PropertyDesc desc;
+    ASSERT_EQ(dmGameObject::PROPERTY_RESULT_OK, dmGameObject::GetProperty(instance, comp_id, prop_id, options, desc));
+    ASSERT_EQ(path, desc.m_Variant.m_Hash);
+
+    RenderMesh(&ro);
+    const uint16_t other_indices[] = { 0, 2, 3 };
+    AssertIndices(ro, dmGraphics::TYPE_UNSIGNED_SHORT, other_indices, 3);
+    dmResource::Release(m_Factory, other);
+
+    ASSERT_TRUE(dmGameObject::Final(m_Collection));
+}
+
+// Material and indices changes must acquire and release exactly one index buffer reference per mesh,
+// which CompMeshDeleteWorld asserts when the collection is deleted.
+TEST_F(IndexedMeshTest, MaterialAndIndicesChanges)
+{
+    void* bytes;
+    uint32_t size;
+    ASSERT_EQ(dmResource::RESULT_OK, dmResource::GetRaw(m_Factory, "/mesh/mesh.materialc", &bytes, &size));
+    dmGameSystem::MaterialResource* world_material = 0;
+    dmResource::Result result = dmResource::CreateResource(m_Factory, "/world.materialc", bytes, size, (void**)&world_material);
+    free(bytes);
+    ASSERT_EQ(dmResource::RESULT_OK, result);
+    dmRender::SetMaterialVertexSpace(world_material->m_Material, dmRenderDDF::MaterialDesc::VERTEX_SPACE_WORLD);
+
+    ASSERT_TRUE(dmGameObject::Init(m_Collection));
+    dmGameObject::HInstance instance = Spawn(m_Factory, m_Collection, "/mesh/indexed_quad.goc", dmHashString64("/quad"));
+    ASSERT_NE((dmGameObject::HInstance)0, instance);
+    dmGameObject::HInstance keeper = Spawn(m_Factory, m_Collection, "/mesh/indexed_quad.goc", dmHashString64("/keeper"));
+    ASSERT_NE((dmGameObject::HInstance)0, keeper);
+    ASSERT_TRUE(dmGameObject::Update(m_Collection, &m_UpdateContext));
+    dmGameObject::Delete(m_Collection, keeper, true);
+    ASSERT_TRUE(dmGameObject::PostUpdate(m_Collection));
+
+    dmhash_t comp_id = dmHashString64("mesh");
+    dmGameObject::PropertyOptions options;
+    const uint16_t quad_indices[] = { 0, 1, 2, 0, 2, 3 };
+    dmRender::RenderObject* ro = 0;
+    for (uint32_t i = 0; i < 2; ++i)
+    {
+        // World space meshes draw their vertices without indices
+        ASSERT_EQ(dmGameObject::PROPERTY_RESULT_OK, dmGameObject::SetProperty(instance, comp_id, dmHashString64("material"), options, dmGameObject::PropertyVar(dmHashString64("/world.materialc"))));
+        RenderMesh(&ro);
+        ASSERT_EQ((dmGraphics::HIndexBuffer)0, ro->m_IndexBuffer);
+        ASSERT_EQ(4u, ro->m_VertexCount);
+
+        ASSERT_EQ(dmGameObject::PROPERTY_RESULT_OK, dmGameObject::SetProperty(instance, comp_id, dmHashString64("material"), options, dmGameObject::PropertyVar(dmHashString64("/mesh/mesh.materialc"))));
+        RenderMesh(&ro);
+        AssertIndices(ro, dmGraphics::TYPE_UNSIGNED_SHORT, quad_indices, 6);
+    }
+
+    // Replacing the indices and destroying the mesh without another update releases the override's buffer.
+    // A resource property can only be set to a resource that is already loaded.
+    dmGameSystem::BufferResource* other;
+    ASSERT_EQ(dmResource::RESULT_OK, dmResource::Get(m_Factory, "/mesh/triangle_indices.bufferc", (void**)&other));
+    ASSERT_EQ(dmGameObject::PROPERTY_RESULT_OK, dmGameObject::SetProperty(instance, comp_id, dmHashString64("indices"), options, dmGameObject::PropertyVar(dmHashString64("/mesh/triangle_indices.bufferc"))));
+    dmGameObject::Delete(m_Collection, instance, true);
+    ASSERT_TRUE(dmGameObject::PostUpdate(m_Collection));
+
+    ASSERT_TRUE(dmGameObject::Final(m_Collection));
+    dmResource::Release(m_Factory, other);
+    dmResource::Release(m_Factory, world_material);
+}
+
 const char* valid_buffer_resources[] = {"/mesh/no_data.bufferc", "/mesh/triangle.bufferc"};
 INSTANTIATE_TEST_CASE_P(Buffer, ResourceTest, jc_test_values_in(valid_buffer_resources));
 

@@ -1,0 +1,4 @@
+material: "/mesh/mesh.material"
+vertices: "/mesh/quad.buffer"
+primitive_type: PRIMITIVE_TRIANGLES
+indices: "/mesh/quad_indices.buffer"

@@ -46,6 +46,10 @@ public class MeshBuilder extends ProtoBuilder<MeshDesc.Builder> {
         IResource resource = task.input(0);
         BuilderUtil.checkResource(this.project, resource, "vertices", meshDescBuilder.getVertices());
         meshDescBuilder.setVertices(ResourceUtil.minifyPathAndReplaceExt(meshDescBuilder.getVertices(), ".buffer", ".bufferc"));
+        if (!meshDescBuilder.getIndices().isEmpty()) {
+            BuilderUtil.checkResource(this.project, resource, "indices", meshDescBuilder.getIndices());
+            meshDescBuilder.setIndices(ResourceUtil.minifyPathAndReplaceExt(meshDescBuilder.getIndices(), ".buffer", ".bufferc"));
+        }
         BuilderUtil.checkResource(this.project, resource, "material", meshDescBuilder.getMaterial());
         meshDescBuilder.setMaterial(ResourceUtil.minifyPathAndReplaceExt(meshDescBuilder.getMaterial(), ".material", ".materialc"));
 

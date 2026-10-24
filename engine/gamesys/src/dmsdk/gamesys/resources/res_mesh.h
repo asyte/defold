@@ -30,6 +30,7 @@ namespace dmGameSystem
     {
         dmMeshDDF::MeshDesc*    m_MeshDDF;
         BufferResource*         m_BufferResource;
+        BufferResource*         m_IndexBufferResource; // May be 0
         MaterialResource*       m_Material;
 
         TextureResource*        m_Textures[dmRender::RenderObject::MAX_TEXTURE_COUNT];

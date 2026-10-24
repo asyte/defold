@@ -65,6 +65,7 @@ namespace dmGameSystem
         HComponentRenderConstants       m_RenderConstants;
         MeshResource*                   m_Resource;
         dmGameSystem::BufferResource*   m_BufferResource;
+        dmGameSystem::BufferResource*   m_IndexBufferResource;
         TextureResource*                m_Textures[dmRender::RenderObject::MAX_TEXTURE_COUNT];
         MaterialResource*               m_Material;
 
@@ -75,6 +76,8 @@ namespace dmGameSystem
         uint32_t                        m_BufferVersion;
         // The acquired buffer can differ from the current resource after a reload.
         dmhash_t                        m_VertexBufferResourceHash;
+        uint32_t                        m_IndexBufferVersion;
+        dmhash_t                        m_IndexBufferResourceHash;
 
         /// Component enablement
         uint8_t                         m_Enabled : 1;
@@ -82,7 +85,8 @@ namespace dmGameSystem
         uint8_t                         m_AddedToUpdate : 1;
         uint8_t                         m_ReHash : 1;
         uint8_t                         m_HasVertexBuffer : 1;
-        uint8_t                         :4;
+        uint8_t                         m_HasIndexBuffer : 1;
+        uint8_t                         :3;
     };
 
     struct VertexBufferInfo
@@ -90,6 +94,15 @@ namespace dmGameSystem
         dmGraphics::HVertexBuffer m_VertexBuffer;
         uint32_t m_RefCount;
         uint32_t m_Version;
+    };
+
+    struct IndexBufferInfo
+    {
+        dmGraphics::HIndexBuffer m_IndexBuffer;
+        uint32_t                 m_RefCount;
+        uint32_t                 m_Version;
+        uint32_t                 m_IndexCount;
+        dmGraphics::Type         m_IndexType;
     };
 
     struct MeshWorld
@@ -100,12 +113,13 @@ namespace dmGameSystem
         dmObjectPool<MeshComponent*>       m_Components;
         dmArray<dmRender::RenderObject>    m_RenderObjects;
         dmHashTable64<VertexBufferInfo>    m_ResourceToVertexBuffer;
+        dmHashTable64<IndexBufferInfo>     m_ResourceToIndexBuffer;
         dmArray<dmGraphics::HVertexBuffer> m_VertexBufferPool;
         dmArray<dmGraphics::HVertexBuffer> m_VertexBufferWorld; // for meshes batched in world space
         dmGraphics::HContext               m_GraphicsContext;
         void*                              m_WorldVertexData;
         size_t                             m_WorldVertexDataSize;
-
+        bool                               m_WorldSpaceIndicesLogged;
     };
 
     struct MeshContext
@@ -232,9 +246,101 @@ namespace dmGameSystem
         }
     }
 
+    static void CreateIndexBuffer(MeshWorld* world, dmGameSystem::BufferResource* br)
+    {
+        IndexBufferInfo* info = world->m_ResourceToIndexBuffer.Get(br->m_NameHash);
+        if (info)
+        {
+            info->m_RefCount++;
+            return;
+        }
+
+        IndexBufferInfo new_info;
+        new_info.m_IndexBuffer = dmGraphics::NewIndexBuffer(world->m_GraphicsContext, 0, 0x0, dmGraphics::BUFFER_USAGE_DYNAMIC_DRAW);
+        new_info.m_RefCount = 1;
+        new_info.m_Version = 0;
+        new_info.m_IndexCount = 0;
+        new_info.m_IndexType = dmGraphics::TYPE_UNSIGNED_SHORT;
+        if (world->m_ResourceToIndexBuffer.Full())
+        {
+            uint32_t capacity = world->m_ResourceToIndexBuffer.Capacity() + 8;
+            world->m_ResourceToIndexBuffer.SetCapacity(capacity / 3, capacity);
+        }
+        world->m_ResourceToIndexBuffer.Put(br->m_NameHash, new_info);
+    }
+
+    static void DecRefIndexBuffer(MeshWorld* world, dmhash_t path)
+    {
+        IndexBufferInfo* info = world->m_ResourceToIndexBuffer.Get(path);
+        assert(info != 0);
+
+        info->m_RefCount--;
+        if (info->m_RefCount == 0)
+        {
+            dmGraphics::HIndexBuffer index_buffer = info->m_IndexBuffer;
+            world->m_ResourceToIndexBuffer.Erase(path);
+            dmGraphics::DeleteIndexBuffer(index_buffer);
+        }
+    }
+
+    // An index buffer has a single stream of uint16 or uint32 values, with one value per element
+    static bool GetIndexType(dmBuffer::HBuffer buffer, dmGraphics::Type* out_type)
+    {
+        uint32_t stream_count = 0;
+        if (dmBuffer::GetNumStreams(buffer, &stream_count) != dmBuffer::RESULT_OK || stream_count != 1)
+            return false;
+
+        dmhash_t stream_name;
+        dmBuffer::ValueType value_type;
+        uint32_t value_count = 0;
+        if (dmBuffer::GetStreamName(buffer, 0, &stream_name) != dmBuffer::RESULT_OK ||
+            dmBuffer::GetStreamType(buffer, stream_name, &value_type, &value_count) != dmBuffer::RESULT_OK ||
+            value_count != 1)
+            return false;
+
+        switch (value_type)
+        {
+            case dmBuffer::VALUE_TYPE_UINT16:
+                *out_type = dmGraphics::TYPE_UNSIGNED_SHORT;
+                return true;
+            case dmBuffer::VALUE_TYPE_UINT32:
+                *out_type = dmGraphics::TYPE_UNSIGNED_INT;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    static void UpdateIndexBuffer(MeshWorld* world, dmGameSystem::BufferResource* br, uint32_t version)
+    {
+        IndexBufferInfo* info = world->m_ResourceToIndexBuffer.Get(br->m_NameHash);
+        if (info->m_Version == version)
+            return;
+
+        info->m_Version = version;
+        info->m_IndexCount = 0;
+        if (!br->m_Buffer || br->m_ElementCount == 0)
+            return;
+
+        if (!GetIndexType(br->m_Buffer, &info->m_IndexType))
+        {
+            dmLogError("Mesh indices in %s must be a single stream of uint16 or uint32 values with count 1.", dmHashReverseSafe64(br->m_NameHash));
+            return;
+        }
+
+        uint8_t* bytes = 0x0;
+        uint32_t size = 0;
+        dmBuffer::Result r = dmBuffer::GetBytes(br->m_Buffer, (void**)&bytes, &size);
+        assert(r == dmBuffer::RESULT_OK);
+
+        dmGraphics::SetIndexBufferData(info->m_IndexBuffer, size, bytes, dmGraphics::BUFFER_USAGE_DYNAMIC_DRAW);
+        info->m_IndexCount = br->m_ElementCount;
+    }
+
     static const uint32_t MAX_TEXTURE_COUNT = dmRender::RenderObject::MAX_TEXTURE_COUNT;
 
     static const dmhash_t PROP_VERTICES = dmHashString64("vertices");
+    static const dmhash_t PROP_INDICES = dmHashString64("indices");
 
     static const uint64_t AABB_HASH = dmHashString64("AABB");
 
@@ -258,6 +364,7 @@ namespace dmGameSystem
 
         world->m_WorldVertexData = 0x0;
         world->m_WorldVertexDataSize = 0;
+        world->m_WorldSpaceIndicesLogged = false;
 
         world->m_GraphicsContext = dmRender::GetGraphicsContext(context->m_RenderContext);
 
@@ -272,6 +379,7 @@ namespace dmGameSystem
     {
         MeshWorld* world = (MeshWorld*)params.m_World;
         assert(world->m_ResourceToVertexBuffer.Empty());
+        assert(world->m_ResourceToIndexBuffer.Empty());
 
         if (world->m_RenderDispatch != 0)
             dmRender::UnregisterRenderListDispatch(world->m_RenderContext, world->m_RenderDispatch);
@@ -344,6 +452,48 @@ namespace dmGameSystem
         }
     }
 
+    static inline dmGameSystem::BufferResource* GetIndexBufferResource(const MeshComponent* component)
+    {
+        return component->m_IndexBufferResource ? component->m_IndexBufferResource : component->m_Resource->m_IndexBufferResource;
+    }
+
+    static void ReleaseComponentIndexBuffer(MeshWorld* world, MeshComponent* component)
+    {
+        if (component->m_HasIndexBuffer)
+        {
+            DecRefIndexBuffer(world, component->m_IndexBufferResourceHash);
+            component->m_HasIndexBuffer = 0;
+        }
+    }
+
+    // Like the vertex buffer, only local space meshes keep an index buffer, shared by resource name.
+    static void UpdateComponentIndexBuffer(MeshWorld* world, MeshComponent* component)
+    {
+        bool local = dmRender::GetMaterialVertexSpace(GetMaterial(component, component->m_Resource)) == dmRenderDDF::MaterialDesc::VERTEX_SPACE_LOCAL;
+        BufferResource* br = GetIndexBufferResource(component);
+        if (component->m_HasIndexBuffer && (!local || !br || component->m_IndexBufferResourceHash != br->m_NameHash))
+            ReleaseComponentIndexBuffer(world, component);
+
+        if (local && br)
+        {
+            if (!component->m_HasIndexBuffer)
+            {
+                CreateIndexBuffer(world, br);
+                component->m_IndexBufferResourceHash = br->m_NameHash;
+                component->m_HasIndexBuffer = 1;
+            }
+
+            component->m_IndexBufferVersion = CalcBufferVersion(component, br);
+            UpdateIndexBuffer(world, br, component->m_IndexBufferVersion);
+        }
+    }
+
+    static void UpdateComponentBuffers(MeshWorld* world, MeshComponent* component)
+    {
+        UpdateComponentVertexBuffer(world, component);
+        UpdateComponentIndexBuffer(world, component);
+    }
+
     static TextureResource* GetTextureResource(const MeshComponent* component, uint32_t texture_unit)
     {
         assert(texture_unit < MAX_TEXTURE_COUNT);
@@ -402,6 +552,10 @@ namespace dmGameSystem
         BufferResource* br = GetBufferResource(component);
         dmHashUpdateBuffer32(&state, &br->m_NameHash, sizeof(br->m_NameHash));
 
+        BufferResource* index_br = GetIndexBufferResource(component);
+        if (index_br)
+            dmHashUpdateBuffer32(&state, &index_br->m_NameHash, sizeof(index_br->m_NameHash));
+
         // Make sure there is a vertex declaration
         // If the mesh uses a buffer that has zero elements we couldn't
         // create a vert declaration, so just skip hashing it here.
@@ -439,8 +593,8 @@ namespace dmGameSystem
         const Matrix4& go_world = dmGameObject::GetWorldMatrix(component->m_Instance);
         component->m_World = go_world * component->m_Local;
 
-        // Local space uses separate vertex buffers
-        UpdateComponentVertexBuffer(world, component);
+        // Local space uses separate vertex and index buffers
+        UpdateComponentBuffers(world, component);
 
         ReHash(component);
         if (world->m_RenderDispatch == 0)
@@ -468,6 +622,7 @@ namespace dmGameSystem
         dmResource::HFactory factory = dmGameObject::GetFactory(params.m_Instance);
 
         ReleaseComponentVertexBuffer(world, component);
+        ReleaseComponentIndexBuffer(world, component);
 
         if (component->m_VertexDeclaration)
             dmGraphics::DeleteVertexDeclaration(component->m_VertexDeclaration);
@@ -485,6 +640,10 @@ namespace dmGameSystem
 
         if (component->m_BufferResource) {
             dmResource::Release(factory, component->m_BufferResource);
+        }
+        if (component->m_IndexBufferResource)
+        {
+            dmResource::Release(factory, component->m_IndexBufferResource);
         }
         if (component->m_RenderConstants)
             dmGameSystem::DestroyRenderConstants(component->m_RenderConstants);
@@ -546,7 +705,7 @@ namespace dmGameSystem
                 continue;
             }
 
-            UpdateComponentVertexBuffer(world, &component);
+            UpdateComponentBuffers(world, &component);
 
             if (component.m_RenderConstants && dmGameSystem::AreRenderConstantsUpdated(component.m_RenderConstants))
                 component.m_ReHash = 1;
@@ -588,13 +747,6 @@ namespace dmGameSystem
         ro.m_VertexStart = vert_start;
         ro.m_VertexCount = vert_count;
         ro.m_WorldTransform = world_transform;
-
-        // TODO(andsve): For future reference; we might want to have a separate buffer resource for indices.
-        // if(mr->m_IndexBuffer)
-        // {
-        //     ro.m_IndexBuffer = mr->m_IndexBuffer;
-        //     ro.m_IndexType = mr->m_IndexBufferElementType;
-        // }
 
         for (uint32_t i = 0; i < dmRender::RenderObject::MAX_TEXTURE_COUNT; ++i)
         {
@@ -739,6 +891,12 @@ namespace dmGameSystem
             const BufferResource* br = GetBufferResource(c);
 
             element_count += br->m_ElementCount;
+
+            if (GetIndexBufferResource(c) && !world->m_WorldSpaceIndicesLogged)
+            {
+                dmLogError("Mesh indices are only supported for materials in local vertex space, drawing without them.");
+                world->m_WorldSpaceIndicesLogged = true;
+            }
         }
 
         // Allocate a larger scratch buffer if vert count * vert size is larger than current buffer.
@@ -827,6 +985,15 @@ namespace dmGameSystem
             const TextureResource** mesh_resource_textures = (const TextureResource**) mr->m_Textures;
             const TextureResource** component_textures     = (const TextureResource**) component->m_Textures;
             FillRenderObject(ro, mr->m_PrimitiveType, material, mesh_resource_textures, component_textures, vert_decl, info->m_VertexBuffer, 0, br->m_ElementCount, component->m_World, component->m_RenderConstants);
+
+            if (component->m_HasIndexBuffer)
+            {
+                IndexBufferInfo* index_info = world->m_ResourceToIndexBuffer.Get(component->m_IndexBufferResourceHash);
+                assert(index_info != 0);
+                ro.m_IndexBuffer = index_info->m_IndexBuffer;
+                ro.m_IndexType = index_info->m_IndexType;
+                ro.m_VertexCount = index_info->m_IndexCount;
+            }
             dmRender::AddToRender(render_context, &ro);
         }
         DM_PROPERTY_ADD_U32(rmtp_MeshVertexCount, vertex_count);
@@ -987,7 +1154,7 @@ namespace dmGameSystem
         int index = *params.m_UserData;
         MeshComponent* component = world->m_Components.Get(index);
         component->m_Resource = (MeshResource*)params.m_Resource;
-        UpdateComponentVertexBuffer(world, component);
+        UpdateComponentBuffers(world, component);
         component->m_ReHash = 1;
     }
 
@@ -998,6 +1165,10 @@ namespace dmGameSystem
 
         if (params.m_PropertyId == PROP_VERTICES) {
             return GetResourceProperty(dmGameObject::GetFactory(params.m_Instance), GetBufferResource(component), out_value);
+        }
+        else if (params.m_PropertyId == PROP_INDICES)
+        {
+            return GetResourceProperty(dmGameObject::GetFactory(params.m_Instance), GetIndexBufferResource(component), out_value);
         }
         else if (params.m_PropertyId == PROP_MATERIAL)
         {
@@ -1057,12 +1228,20 @@ namespace dmGameSystem
 
             return res;
         }
+        else if (params.m_PropertyId == PROP_INDICES)
+        {
+            dmGameObject::PropertyResult res = SetResourceProperty(dmGameObject::GetFactory(params.m_Instance), params.m_Value, BUFFER_EXT_HASH, (void**)&component->m_IndexBufferResource);
+            component->m_ReHash |= res == dmGameObject::PROPERTY_RESULT_OK;
+            if (res == dmGameObject::PROPERTY_RESULT_OK)
+                UpdateComponentIndexBuffer(world, component);
+            return res;
+        }
         else if (params.m_PropertyId == PROP_MATERIAL)
         {
             dmGameObject::PropertyResult res = SetResourceProperty(dmGameObject::GetFactory(params.m_Instance), params.m_Value, MATERIAL_EXT_HASH, (void**)&component->m_Material);
             component->m_ReHash |= res == dmGameObject::PROPERTY_RESULT_OK;
             if (res == dmGameObject::PROPERTY_RESULT_OK)
-                UpdateComponentVertexBuffer(world, component);
+                UpdateComponentBuffers(world, component);
             return res;
         }
 
@@ -1099,9 +1278,11 @@ namespace dmGameSystem
             {
                 const dmRender::HMaterial material = GetMaterial(component, component->m_Resource);
                 const dmGameSystem::BufferResource* buffer_resource = GetBufferResource(component);
+                const dmGameSystem::BufferResource* index_buffer_resource = GetIndexBufferResource(component);
                 if (component->m_Resource == resource ||
-                   material == resource ||
-                   buffer_resource == resource)
+                    material == resource ||
+                    buffer_resource == resource ||
+                    (index_buffer_resource && index_buffer_resource == resource))
                 {
                     component->m_ReHash = 1;
                     continue;
