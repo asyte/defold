@@ -13,6 +13,7 @@ to (BUG.###), and its upstream pull request or "not offered, because ...".
 | Commit | Fixes | TrailPark bug | Upstream |
 | ------ | ----- | ------------- | -------- |
 | 4fb637c | A startup crash on the job thread when the OpenGL async texture check fails: `ValidateAsyncJobProcessing()` now deletes its test texture directly, so no delete job is left to lock the mutexes `AsyncInitialize()` deletes | BUG.001 | Issue and pull request not yet filed; the pull request will come from `fix/async-validation-texture-race` |
+| b4c5ab9 | Mesh components have no index buffers, so every triangle sends three vertices: `MeshDesc` gains an optional `indices` buffer (one uint16 or uint32 stream), drawn by index in local vertex space and replaceable at run time with `go.set(mesh, "indices", res)` and `resource.set_buffer`; Bob builds the field. A feature, not a fix; the stock editor does not know the field. Formatted with 1.14.0's clang-format, so its alignment differs from cfcb712 | M1.039 (a task, not a bug) | Not yet offered; the pull request will come from `feature/mesh-index-buffers` (cfcb712, on upstream `dev`) |
 
 ## Build machine
 
