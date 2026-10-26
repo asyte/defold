@@ -2315,7 +2315,7 @@ class Configuration(object):
 
     def build_bob_plugins(self):
         gradle = join('..', 'com.dynamo.cr.bob', os.name == 'nt' and 'gradlew.bat' or 'gradlew')
-        gradle_args = []
+        gradle_args = ['--no-daemon']
         if self.verbose:
             gradle_args += ['--info']
 
@@ -2345,7 +2345,8 @@ class Configuration(object):
             env = self._form_env()
 
             gradle = self.get_gradle_wrapper()
-            gradle_args = ['-Ptarget-platform=%s' % self.target_platform]
+            # A Gradle daemon would outlive the build and keep holding its memory
+            gradle_args = ['--no-daemon', '-Ptarget-platform=%s' % self.target_platform]
             if self.channel:
                 gradle_args.append('-Pchannel=%s' % self.channel)
             if self.verbose:
@@ -2576,7 +2577,7 @@ class Configuration(object):
         env = self._form_env()
 
         gradle = self.get_gradle_wrapper()
-        gradle_args = ['-Ptarget-platform=%s' % self.target_platform]
+        gradle_args = ['--no-daemon', '-Ptarget-platform=%s' % self.target_platform]
         if self.channel:
             gradle_args.append('-Pchannel=%s' % self.channel)
         if self.verbose:
