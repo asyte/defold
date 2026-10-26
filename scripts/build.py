@@ -825,6 +825,20 @@ class Configuration(object):
             self._remove_tree(join(self.ext, directory, platform))
         self._log('clean_ext done for %s.' % platform)
 
+    def _run_tar(self, cmd, **kwargs):
+        # On Windows, another process (e.g. a virus scanner) can briefly hold a file that tar
+        # is replacing, and tar then fails to unlink it. Retry a few times before giving up.
+        attempts = 3 if os.name == 'nt' else 1
+        for attempt in range(attempts):
+            try:
+                run.env_command(self._form_env(), cmd, **kwargs)
+                return
+            except run.ExecException:
+                if attempt == attempts - 1:
+                    raise
+                self._log('tar failed, retrying in 2 seconds')
+                time.sleep(2)
+
     def _extract_tgz(self, file, path):
         self._log('Extracting %s to %s' % (file, path))
         self._mkdirs(path)
@@ -833,7 +847,7 @@ class Configuration(object):
         cmd = ['tar', 'xf%s' % fmts.get(suffix, 'z'), file]
         if os.name == 'nt':
             cmd.append('--unlink-first')
-        run.env_command(self._form_env(), cmd, cwd = path)
+        self._run_tar(cmd, cwd = path)
 
     def _extract_tgz_rename_folder(self, src, target_folder, strip_components=1, format=None):
         src = src.replace('\\', '/')
@@ -860,7 +874,7 @@ class Configuration(object):
         if force_local:
             cmd.append(force_local)
 
-        run.env_command(self._form_env(), cmd)
+        self._run_tar(cmd)
         os.chdir(old_dir)
 
     def _extract_zip(self, file, path):
