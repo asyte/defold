@@ -311,6 +311,8 @@ add_custom_target(stage_bob_light_dependencies
   VERBATIM)
 
 if(NOT DEFOLD_SKIP_BOB_LIGHT)
+  # A Gradle daemon started here inherits the build tool's output pipe on Windows,
+  # so Ninja waits for it to exit and the build hangs. Run Gradle without one.
   add_custom_command(
     OUTPUT "${DEFOLD_BOB_LIGHT_JAR}"
     COMMAND "${CMAKE_COMMAND}" -E env
@@ -318,7 +320,7 @@ if(NOT DEFOLD_SKIP_BOB_LIGHT)
       "DYNAMO_HOME=${DEFOLD_SDK_ROOT}"
       "JAVA_HOME=${DEFOLD_JAVA_HOME}"
       "GRADLE_OPTS=-Dorg.gradle.parallel=true --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED"
-      "${DEFOLD_GRADLEW}" -Pkeep-bob-uncompressed "-Ptarget-platform=${TARGET_PLATFORM}" "-Ppython=${Python3_EXECUTABLE}" installBobLight
+      "${DEFOLD_GRADLEW}" --no-daemon -Pkeep-bob-uncompressed "-Ptarget-platform=${TARGET_PLATFORM}" "-Ppython=${Python3_EXECUTABLE}" installBobLight
     WORKING_DIRECTORY "${DEFOLD_BOB_DIR}"
     DEPENDS stage_bob_light_dependencies ${_DEFOLD_BOB_LIGHT_DEPENDS}
     COMMENT "Building bob-light.jar"
