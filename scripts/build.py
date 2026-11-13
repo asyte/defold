@@ -64,7 +64,8 @@ _CMAKE_FEATURE_FLAG_MAP = {
 
 _CMAKE_FEATURE_LIST_OPTIONS = {
     '--enable-feature': 'DEFOLD_ENABLE_FEATURES',
-    '--disable-feature': 'DEFOLD_DISABLE_FEATURES'
+    '--disable-feature': 'DEFOLD_DISABLE_FEATURES',
+    '--engine-extension': 'DEFOLD_ENGINE_EXTENSIONS'
 }
 
 JAVA_RUNTIME_FLAGS = '--sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED'

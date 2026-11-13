@@ -414,6 +414,22 @@ if(WITH_OPUS)
 endif()
 list(APPEND ENGINE_EXPORTED_SYMBOLS ${ENGINE_GRAPHICS_SYMBOLS})
 
+# Extensions built from source folders outside the Defold tree, given with
+# build.py's --engine-extension option. Each folder's CMakeLists.txt adds a
+# static library and appends its target and extension symbol to the
+# DEFOLD_ENGINE_EXTENSION_LIBS and DEFOLD_ENGINE_EXTENSION_SYMBOLS global
+# properties, so the debug and release engines link and register it.
+set(DEFOLD_ENGINE_EXTENSIONS "" CACHE STRING "Semicolon separated list of extension source folders to link into the engine")
+set(_engine_extension_index 0)
+foreach(_engine_extension_dir IN LISTS DEFOLD_ENGINE_EXTENSIONS)
+  add_subdirectory("${_engine_extension_dir}" "${CMAKE_CURRENT_BINARY_DIR}/extensions/${_engine_extension_index}")
+  math(EXPR _engine_extension_index "${_engine_extension_index} + 1")
+endforeach()
+get_property(ENGINE_EXTENSION_LIBS GLOBAL PROPERTY DEFOLD_ENGINE_EXTENSION_LIBS)
+get_property(ENGINE_EXTENSION_SYMBOLS GLOBAL PROPERTY DEFOLD_ENGINE_EXTENSION_SYMBOLS)
+list(APPEND ENGINE_EXTRA_LIBS ${ENGINE_EXTENSION_LIBS})
+list(APPEND ENGINE_EXPORTED_SYMBOLS ${ENGINE_EXTENSION_SYMBOLS})
+
 set(ENGINE_PROFILE_LIBS profile profilerext)
 set(ENGINE_RECORD_SYMBOLS)
 if(TARGET record)
